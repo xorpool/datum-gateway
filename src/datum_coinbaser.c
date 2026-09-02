@@ -938,11 +938,14 @@ bool datum_permine_rewrite_coinbase(const T_DATUM_STRATUM_JOB *job, const T_DATU
 	vlen = permine_read_varint(tx + pos, len - pos, &scriptlen); if (!vlen) return false;
 	pos += vlen + scriptlen + 4;
 	if (pos >= len) return false;
-	if (pos <= (size_t)src->coinb1_len + 12) return false; // outputs must start after the extranonce region
 	
-	// output count
+	// output count. In DATUM's "extranonce in an OP_RETURN output" layout the count byte and the first
+	// output sit before the 12-byte extranonce region (which lives inside that output's script); we may
+	// patch the count and copy that output byte-for-byte, but must never move or edit the region itself.
 	vlen = permine_read_varint(tx + pos, len - pos, &n); if (!vlen || vlen != 1) return false;
 	const size_t count_pos = pos;
+	const size_t en_start = (size_t)src->coinb1_len, en_end = en_start + 12;
+	if (count_pos >= en_start && count_pos < en_end) return false;
 	pos += vlen;
 	
 	// copy prefix (up to and including the count byte; count patched later)
@@ -958,7 +961,8 @@ bool datum_permine_rewrite_coinbase(const T_DATUM_STRATUM_JOB *job, const T_DATU
 		if (pos + 8 + vlen + scriptlen > len) return false;
 		const size_t outlen = 8 + vlen + scriptlen;
 		
-		if (!replaced && value > 0 && scriptlen == (uint64_t)job->pool_addr_script_len && !memcmp(script, job->pool_addr_script, scriptlen)) {
+		// the output we replace must lie entirely after the extranonce region so the coinb1/coinb2 split stays valid
+		if (!replaced && pos >= en_end && value > 0 && scriptlen == (uint64_t)job->pool_addr_script_len && !memcmp(script, job->pool_addr_script, scriptlen)) {
 			uint64_t fee = fee_bps ? (value * fee_bps) / 10000 : 0;
 			if (fee >= value) fee = 0;
 			// miner output
@@ -974,6 +978,8 @@ bool datum_permine_rewrite_coinbase(const T_DATUM_STRATUM_JOB *job, const T_DATU
 			}
 			replaced = true;
 		} else {
+			// unchanged output; if it straddles the extranonce region it must stay at the same offset
+			if (pos < en_end && opos != pos) return false;
 			if (opos + outlen > sizeof(out)) return false;
 			memcpy(out + opos, tx + pos, outlen); opos += outlen; ncount++;
 		}
