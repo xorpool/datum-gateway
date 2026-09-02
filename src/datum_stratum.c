@@ -1127,8 +1127,8 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		return 0;
 	}
 	
-	// xorpool: per-miner payout rewrite must match what notify sent
-	if (m->payout_script_len && !job->is_datum_job) {
+	// xorpool: per-miner payout rewrite must match what notify sent for this job
+	if (m->pm_job_used[g_job_index] && m->payout_script_len && !job->is_datum_job) {
 		if (!m->pm_cb) m->pm_cb = calloc(1, sizeof(T_DATUM_STRATUM_COINBASE));
 		if (m->pm_cb && datum_permine_rewrite_coinbase(job, cb, m->payout_script, m->payout_script_len, m->pm_cb)) {
 			cb = m->pm_cb;
@@ -1587,10 +1587,12 @@ int send_mining_notify(T_DATUM_CLIENT_DATA *c, bool clean, bool quickdiff, bool 
 	
 	// xorpool: per-miner payout rewrite (non-pooled only)
 	DLOG_DEBUG("xorpool: notify for %s payout_len=%d datum_job=%d subsidy_only=%d", m->last_auth_username, m->payout_script_len, j->is_datum_job ? 1 : 0, subsidy_only ? 1 : 0);
+	m->pm_job_used[j->global_index] = 0;
 	if (m->payout_script_len && !j->is_datum_job) {
 		if (!m->pm_cb) m->pm_cb = calloc(1, sizeof(T_DATUM_STRATUM_COINBASE));
 		if (m->pm_cb && datum_permine_rewrite_coinbase(j, cb, m->payout_script, m->payout_script_len, m->pm_cb)) {
 			cb = m->pm_cb;
+			m->pm_job_used[j->global_index] = 1;
 			DLOG_DEBUG("xorpool: per-miner coinbase for %s: %s%s%s", m->last_auth_username, cb->coinb1, "000000000000000000000000", cb->coinb2);
 		} else {
 			DLOG_ERROR("xorpool: per-miner coinbase rewrite failed for %s; using pool coinbase", m->last_auth_username);
