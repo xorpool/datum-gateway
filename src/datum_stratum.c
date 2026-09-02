@@ -357,7 +357,7 @@ void datum_stratum_v1_socket_thread_client_new(T_DATUM_CLIENT_DATA *c) {
 	DLOG_DEBUG("New Stratum client connected. %d",c->fd);
 	
 	// clear miner data for connection
-	memset(m, 0, sizeof(T_DATUM_MINER_DATA));
+	{ T_DATUM_STRATUM_COINBASE *keep = m->pm_cb; memset(m, 0, sizeof(T_DATUM_MINER_DATA)); m->pm_cb = keep; }
 	m->sdata = (T_DATUM_STRATUM_THREADPOOL_DATA *)c->datum_thread->app_thread_data;
 	m->stats.last_swap_tsms = m->stats.last_share_tsms;
 	
@@ -1127,6 +1127,18 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		return 0;
 	}
 	
+	// xorpool: per-miner payout rewrite must match what notify sent
+	if (m->payout_script_len && !job->is_datum_job) {
+		if (!m->pm_cb) m->pm_cb = calloc(1, sizeof(T_DATUM_STRATUM_COINBASE));
+		if (m->pm_cb && datum_permine_rewrite_coinbase(job, cb, m->payout_script, m->payout_script_len, m->pm_cb)) {
+			cb = m->pm_cb;
+		} else {
+			send_unknown_work_error(c, id);
+			stratum_note_share(m, false, job_diff);
+			return 0;
+		}
+	}
+	
 	memcpy(&full_cb_txn[0], cb->coinb1_bin, cb->coinb1_len);
 	// Hasher extranonce lives in the v2 header, not the Bitcoin coinbase.
 	memset(&full_cb_txn[cb->coinb1_len], 0, 12);
@@ -1264,7 +1276,9 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		DLOG_WARN("******** BLOCK FOUND - %s ********",new_notify_blockhash);
 		DLOG_WARN("************************************************************************************************");
 		
+		DLOG_WARN("xorpool: BLOCK %s height %llu found by %s (diff %llu)", new_notify_blockhash, (unsigned long long)job->height, m->last_auth_username, (unsigned long long)job_diff);
 		i = assembleBlockAndSubmit(block_header, full_cb_txn, cb->coinb1_len+12+cb->coinb2_len, job, m->sdata, new_notify_blockhash, empty_work, extranonce_bin);
+		DLOG_WARN("xorpool: BLOCK %s submit result for %s: %s", new_notify_blockhash, m->last_auth_username, i ? "ACCEPTED by node" : "REJECTED by node");
 		if (i) {
 			// successfully submitted
 			datum_blocktemplates_notifynew(new_notify_blockhash, job->height + 1);
@@ -1436,6 +1450,24 @@ int client_mining_authorize(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_
 	strncpy(m->last_auth_username, username_s, sizeof(m->last_auth_username) - 1);
 	m->last_auth_username[sizeof(m->last_auth_username)-1] = 0;
 	
+	// xorpool: derive per-miner payout script from the address part of the username
+	m->payout_script_len = 0;
+	if (datum_config.mining_per_miner_payout && !datum_protocol_is_active()) {
+		char addrbuf[128];
+		const char *dot = strchr(username_s, '.');
+		size_t alen = dot ? (size_t)(dot - username_s) : strlen(username_s);
+		if (alen > 0 && alen < sizeof(addrbuf)) {
+			memcpy(addrbuf, username_s, alen); addrbuf[alen] = 0;
+			int l = addr_2_output_script(addrbuf, m->payout_script, sizeof(m->payout_script));
+			if (l > 0 && l <= 64) {
+				m->payout_script_len = l;
+				DLOG_INFO("xorpool: %s will be paid to %s (fee %d bps)", username_s, addrbuf, datum_config.mining_pool_fee_bps);
+			} else {
+				DLOG_WARN("xorpool: username '%s' has no valid address; blocks pay pool_address", username_s);
+			}
+		}
+	}
+	
 	char idbuf[160];
 	stratum_rpc_id_text(c, id, idbuf, sizeof(idbuf));
 	snprintf(s, sizeof(s), "{\"error\":null,\"id\":%s,\"result\":true}\n", idbuf);
@@ -1443,6 +1475,11 @@ int client_mining_authorize(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_
 	stratum_rpc_id_clear(c);
 	
 	m->authorized = true;
+	
+	// xorpool: push a clean job immediately so the miner works on its own payout coinbase
+	if (m->payout_script_len && m->subscribed) {
+		send_mining_notify(c, true, false, false);
+	}
 	
 	return 0;
 }
@@ -1547,6 +1584,18 @@ int send_mining_notify(T_DATUM_CLIENT_DATA *c, bool clean, bool quickdiff, bool 
 	cbselect = datum_stratum_coinbase_index(sdata, m, new_block);
 	const bool subsidy_only = cbselect == DATUM_COINBASE_ID_EMPTY;
 	cb = subsidy_only ? &j->subsidy_only_coinbase : &j->coinbase[cbselect];
+	
+	// xorpool: per-miner payout rewrite (non-pooled only)
+	DLOG_DEBUG("xorpool: notify for %s payout_len=%d datum_job=%d subsidy_only=%d", m->last_auth_username, m->payout_script_len, j->is_datum_job ? 1 : 0, subsidy_only ? 1 : 0);
+	if (m->payout_script_len && !j->is_datum_job) {
+		if (!m->pm_cb) m->pm_cb = calloc(1, sizeof(T_DATUM_STRATUM_COINBASE));
+		if (m->pm_cb && datum_permine_rewrite_coinbase(j, cb, m->payout_script, m->payout_script_len, m->pm_cb)) {
+			cb = m->pm_cb;
+			DLOG_DEBUG("xorpool: per-miner coinbase for %s: %s%s%s", m->last_auth_username, cb->coinb1, "000000000000000000000000", cb->coinb2);
+		} else {
+			DLOG_ERROR("xorpool: per-miner coinbase rewrite failed for %s; using pool coinbase", m->last_auth_username);
+		}
+	}
 	
 	if (quickdiff) {
 		snprintf(s, sizeof(s), "\"Q%s%2.2x\",\"%s\",\"", j->job_id, cbselect, j->prevhash);

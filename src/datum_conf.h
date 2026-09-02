@@ -130,6 +130,8 @@ typedef struct {
 	char mining_save_submitblocks_dir[256];
 	bool mining_allow_hasher_time_rolling;
 	int coinbase_unique_id;
+	bool mining_per_miner_payout;
+	int mining_pool_fee_bps;
 	
 	char api_admin_password[72];
 	size_t api_admin_password_len;

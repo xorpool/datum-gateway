@@ -896,3 +896,106 @@ int datum_coinbaser_init(void) {
 
 	return 0;
 }
+
+
+// ---------------------------------------------------------------------------
+// xorpool: per-miner payout rewrite (non-pooled mode only)
+//
+// Takes a job coinbase (coinb1_bin || 12 zero bytes || coinb2_bin) and replaces
+// the pool payout output (script == job->pool_addr_script) with:
+//   - miner_script : value - fee
+//   - pool script  : fee               (omitted when fee == 0)
+// Everything before the outputs is untouched, so coinb1_len and
+// target_pot_index stay valid. The output-count varint must stay one byte.
+// Deterministic: called identically from notify and submit paths.
+// ---------------------------------------------------------------------------
+static int permine_read_varint(const unsigned char *p, size_t avail, uint64_t *out) {
+	if (avail < 1) return 0;
+	if (p[0] < 0xfd) { *out = p[0]; return 1; }
+	if (p[0] == 0xfd) { if (avail < 3) return 0; *out = p[1] | ((uint64_t)p[2] << 8); return 3; }
+	if (p[0] == 0xfe) { if (avail < 5) return 0; *out = upk_u32le(p, 1); return 5; }
+	if (avail < 9) return 0; *out = upk_u64le(p, 1); return 9;
+}
+
+bool datum_permine_rewrite_coinbase(const T_DATUM_STRATUM_JOB *job, const T_DATUM_STRATUM_COINBASE *src, const unsigned char *miner_script, int miner_script_len, T_DATUM_STRATUM_COINBASE *dst) {
+	unsigned char tx[MAX_COINBASE_TXN_SIZE_BYTES];
+	unsigned char out[MAX_COINBASE_TXN_SIZE_BYTES];
+	size_t len, pos, opos, i;
+	uint64_t n, scriptlen, ncount = 0;
+	int vlen;
+	bool replaced = false;
+	
+	if (!job || !src || !dst || !miner_script || miner_script_len < 1 || miner_script_len > 64) return false;
+	if (src->coinb1_len < 41 || src->coinb1_len + 12 + src->coinb2_len > (int)sizeof(tx)) return false;
+	
+	len = (size_t)src->coinb1_len + 12 + (size_t)src->coinb2_len;
+	memcpy(tx, src->coinb1_bin, src->coinb1_len);
+	memset(tx + src->coinb1_len, 0, 12);
+	memcpy(tx + src->coinb1_len + 12, src->coinb2_bin, src->coinb2_len);
+	
+	// version(4) + vin count(1) + prevout(36) = 41, then script varint + script + sequence(4)
+	pos = 41;
+	vlen = permine_read_varint(tx + pos, len - pos, &scriptlen); if (!vlen) return false;
+	pos += vlen + scriptlen + 4;
+	if (pos >= len) return false;
+	if (pos <= (size_t)src->coinb1_len + 12) return false; // outputs must start after the extranonce region
+	
+	// output count
+	vlen = permine_read_varint(tx + pos, len - pos, &n); if (!vlen || vlen != 1) return false;
+	const size_t count_pos = pos;
+	pos += vlen;
+	
+	// copy prefix (up to and including the count byte; count patched later)
+	memcpy(out, tx, pos); opos = pos;
+	
+	const uint64_t fee_bps = (datum_config.mining_pool_fee_bps > 0 && datum_config.mining_pool_fee_bps < 10000) ? (uint64_t)datum_config.mining_pool_fee_bps : 0;
+	
+	for (i = 0; i < n; i++) {
+		if (pos + 8 > len) return false;
+		uint64_t value = upk_u64le(tx, pos);
+		vlen = permine_read_varint(tx + pos + 8, len - pos - 8, &scriptlen); if (!vlen) return false;
+		const unsigned char *script = tx + pos + 8 + vlen;
+		if (pos + 8 + vlen + scriptlen > len) return false;
+		const size_t outlen = 8 + vlen + scriptlen;
+		
+		if (!replaced && value > 0 && scriptlen == (uint64_t)job->pool_addr_script_len && !memcmp(script, job->pool_addr_script, scriptlen)) {
+			uint64_t fee = fee_bps ? (value * fee_bps) / 10000 : 0;
+			if (fee >= value) fee = 0;
+			// miner output
+			if (opos + 9 + miner_script_len > sizeof(out)) return false;
+			pk_u64le(out, opos, value - fee); opos += 8;
+			out[opos++] = (unsigned char)miner_script_len;
+			memcpy(out + opos, miner_script, miner_script_len); opos += miner_script_len; ncount++;
+			if (fee) {
+				if (opos + 9 + scriptlen > sizeof(out)) return false;
+				pk_u64le(out, opos, fee); opos += 8;
+				out[opos++] = (unsigned char)scriptlen;
+				memcpy(out + opos, script, scriptlen); opos += scriptlen; ncount++;
+			}
+			replaced = true;
+		} else {
+			if (opos + outlen > sizeof(out)) return false;
+			memcpy(out + opos, tx + pos, outlen); opos += outlen; ncount++;
+		}
+		pos += outlen;
+	}
+	if (!replaced) return false;
+	if (ncount > 252) return false;
+	out[count_pos] = (unsigned char)ncount;
+	// locktime (rest of tx)
+	if (pos + 4 != len) return false;
+	memcpy(out + opos, tx + pos, 4); opos += 4;
+	
+	// split back into coinb1/coinb2 at the same extranonce offset
+	dst->coinb1_len = src->coinb1_len;
+	dst->coinb2_len = (int)(opos - (size_t)src->coinb1_len - 12);
+	if (dst->coinb2_len < 0 || dst->coinb2_len > (int)sizeof(dst->coinb2_bin)) return false;
+	memcpy(dst->coinb1_bin, out, dst->coinb1_len);
+	memcpy(dst->coinb2_bin, out + src->coinb1_len + 12, dst->coinb2_len);
+	// hex copies (informational only for BLAKE2b jobs)
+	for (i = 0; i < (size_t)dst->coinb1_len; i++) uchar_to_hex(&dst->coinb1[i << 1], dst->coinb1_bin[i]);
+	dst->coinb1[dst->coinb1_len << 1] = 0;
+	for (i = 0; i < (size_t)dst->coinb2_len; i++) uchar_to_hex(&dst->coinb2[i << 1], dst->coinb2_bin[i]);
+	dst->coinb2[dst->coinb2_len << 1] = 0;
+	return true;
+}

@@ -129,6 +129,10 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 		.required = false, .ptr = datum_config.mining_save_submitblocks_dir,			.default_string[0] = "", .max_string_len = sizeof(datum_config.mining_save_submitblocks_dir) },
 	{ .var_type = DATUM_CONF_BOOL, 		.category = "mining", 		.name = "allow_hasher_time_rolling",	.description = "Allow hasher time rolling for BLAKE2b jobs",
 		.required = false, .ptr = &datum_config.mining_allow_hasher_time_rolling, 		.default_bool = false },
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "mining", 		.name = "per_miner_payout",		.description = "xorpool: in non-pooled mode, pay the block reward to the address in each miner's Stratum username (minus pool_fee_bps to pool_address). Usernames without a valid address fall back to pool_address.",
+		.required = false, .ptr = &datum_config.mining_per_miner_payout, 		.default_bool = false },
+	{ .var_type = DATUM_CONF_INT, 		.category = "mining", 		.name = "pool_fee_bps",			.description = "xorpool: pool fee in basis points (100 = 1%) taken from per-miner payouts and paid to pool_address",
+		.required = false, .ptr = &datum_config.mining_pool_fee_bps, 		.default_int = 0 },
 	
 	// API/dashboard
 	{ .var_type = DATUM_CONF_STRING, 	.category = "api",	 		.name = "admin_password",			.description = "API password for actions/changes (username 'admin'; disabled if blank)",

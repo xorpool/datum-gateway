@@ -236,6 +236,11 @@ typedef struct {
 	
 	unsigned char coinbase_selection;
 	
+	// xorpool per-miner payout
+	unsigned char payout_script[64];
+	int payout_script_len;
+	T_DATUM_STRATUM_COINBASE *pm_cb; // lazily allocated per-miner coinbase buffer
+	
 	uint64_t share_diff_accepted;
 	uint64_t share_count_accepted;
 	
