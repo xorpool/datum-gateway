@@ -2415,6 +2415,11 @@ int assembleBlockAndSubmit(uint8_t *block_header, uint8_t *coinbase_txn, size_t 
 		// oddly, this means success here.
 		DLOG_INFO("Block %s submitted to upstream node successfully!",block_hash_hex);
 		ret = 1;
+	} else if (json_is_string(r) && !strcmp(json_string_value(r), "duplicate")) {
+		// the async submitblock thread beat us to it and the node already holds this block as valid
+		DLOG_INFO("Block %s already known to upstream node (accepted via the async submit)", block_hash_hex);
+		json_decref(r);
+		ret = 1;
 	} else {
 		s = json_dumps(r, JSON_ENCODE_ANY);
 		if (!s) {
