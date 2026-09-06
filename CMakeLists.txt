@@ -30,6 +30,7 @@ add_executable(datum_gateway
 	src/datum_pow.c
 	src/datum_pow_tests.c
 	src/datum_protocol.c
+	src/datum_shared.c
 	src/datum_protocol_tests.c
 	src/datum_queue.c
 	src/datum_sockets.c

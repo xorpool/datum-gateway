@@ -241,6 +241,9 @@ typedef struct {
 	int payout_script_len;
 	T_DATUM_STRATUM_COINBASE *pm_cb; // lazily allocated per-miner coinbase buffer
 	uint8_t pm_job_used[MAX_STRATUM_JOBS]; // 1 if the notify for that job used the per-miner coinbase
+	// xorpool shared payout: accepted difficulty not yet written to the log for the ledger
+	uint64_t shared_diff_unflushed;
+	uint64_t shared_flush_tsms;
 	
 	uint64_t share_diff_accepted;
 	uint64_t share_count_accepted;

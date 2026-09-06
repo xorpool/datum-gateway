@@ -133,6 +133,10 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 		.required = false, .ptr = &datum_config.mining_per_miner_payout, 		.default_bool = false },
 	{ .var_type = DATUM_CONF_INT, 		.category = "mining", 		.name = "pool_fee_bps",			.description = "xorpool: pool fee in basis points (100 = 1%) taken from per-miner payouts and paid to pool_address",
 		.required = false, .ptr = &datum_config.mining_pool_fee_bps, 		.default_int = 0 },
+	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "shared_payout_file",		.description = "xorpool: path to the shared-payout table (JSON {\"payees\":[{\"address\",\"weight\"}]}). When set, every coinbase pays the listed addresses by weight minus pool_fee_bps to pool_address. Non-pooled mode only; incompatible with per_miner_payout.",
+		.required = false, .ptr = datum_config.mining_shared_payout_file,		.default_string[0] = "", .max_string_len = sizeof(datum_config.mining_shared_payout_file) },
+	{ .var_type = DATUM_CONF_INT, 		.category = "mining", 		.name = "shared_min_payout_sats",	.description = "xorpool: payees whose share of a coinbase would be below this many sats are left out of that coinbase (their sats stay with the pool output)",
+		.required = false, .ptr = &datum_config.mining_shared_min_payout_sats, 	.default_int = 1000 },
 	
 	// API/dashboard
 	{ .var_type = DATUM_CONF_STRING, 	.category = "api",	 		.name = "admin_password",			.description = "API password for actions/changes (username 'admin'; disabled if blank)",

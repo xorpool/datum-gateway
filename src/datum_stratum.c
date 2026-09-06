@@ -56,6 +56,7 @@
 #include "datum_sockets.h"
 #include "datum_conf.h"
 #include "datum_coinbaser.h"
+#include "datum_shared.h"
 #include "datum_submitblock.h"
 #include "datum_protocol.h"
 #include "datum_pow.h"
@@ -349,6 +350,7 @@ double datum_stratum_v1_est_total_th_sec(void) {
 
 void datum_stratum_v1_socket_thread_client_closed(T_DATUM_CLIENT_DATA *c, const char *msg) {
 	DLOG_DEBUG("Stratum client connection closed. (%s)", msg);
+	if (c && c->app_client_data) datum_shared_flush((T_DATUM_MINER_DATA *)c->app_client_data, "disconnect");
 }
 
 void datum_stratum_v1_socket_thread_client_new(T_DATUM_CLIENT_DATA *c) {
@@ -904,6 +906,7 @@ void stratum_update_miner_stats_accepted(T_DATUM_CLIENT_DATA *c, uint64_t diff_a
 	
 	m->stats.diff_accepted[m->stats.active_index?1:0] += diff_accepted;
 	m->stats.last_share_tsms = m->sdata->loop_tsms;
+	datum_shared_note_accepted(m, diff_accepted, m->sdata->loop_tsms);
 	
 	if (m->sdata->loop_tsms >= (m->stats.last_swap_tsms+STAT_CYCLE_MS)) {
 		m->stats.last_swap_ms = m->sdata->loop_tsms - m->stats.last_swap_tsms;

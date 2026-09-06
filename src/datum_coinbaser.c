@@ -54,6 +54,7 @@
 #include "datum_jsonrpc.h"
 #include "datum_protocol.h"
 #include "datum_coinbaser.h"
+#include "datum_shared.h"
 
 CURL *coinbaser_curl = NULL;
 
@@ -473,6 +474,18 @@ void generate_base_coinbase_txns_for_stratum_job(T_DATUM_STRATUM_JOB *s, bool ne
 	// End of 0 / Empty
 	//////////////////////////////
 	
+	// xorpool shared payout: every job pays the ledger's table, the quick subsidy-only job included
+	if (datum_shared_enabled() && !s->is_datum_job) {
+		if (space_for_en_in_coinbase) {
+			datum_shared_reload();
+			const int budget = datum_stratum_coinbase_fit_to_template(16000, (cb1idx[0] >> 1) + 12, s);
+			datum_shared_write_coinb2(s, &s->coinbase[0], s->coinbase_value, true, budget);
+			if (new_block) datum_shared_write_coinb2(s, &s->subsidy_only_coinbase, block_reward(s->height), false, 16000);
+		} else {
+			DLOG_ERROR("xorpool shared: coinbase input is too long for the in-coinbase extranonce, so this job pays pool_address only; shorten the coinbase tags");
+		}
+	}
+	
 	// prep binary versions of the coinbase for speeding up later
 	
 	i = strlen(s->coinbase[0].coinb1);
@@ -730,6 +743,20 @@ void generate_coinbase_txns_for_stratum_job(T_DATUM_STRATUM_JOB *s, bool empty_o
 		// TYPE 2 - Older Antminer stock (S19)
 		i = datum_stratum_coinbase_fit_to_template(755, cb_req_sz[2], s);
 		generate_coinbase_txns_for_stratum_job_subtypebysize(s, 2, i, false, cb1idx, cb2idx, true);
+	}
+	
+	// xorpool shared payout: one identical coinbase for every miner class (the BLAKE2b miners never see it)
+	if (datum_shared_enabled() && !s->is_datum_job) {
+		if (space_for_en_in_coinbase) {
+			datum_shared_reload();
+			const int budget = datum_stratum_coinbase_fit_to_template(16000, (cb1idx[0] >> 1) + 12, s);
+			if (datum_shared_write_coinb2(s, &s->coinbase[0], s->coinbase_value, true, budget)) {
+				for (i=1;i<MAX_COINBASE_TYPES;i++) strcpy(s->coinbase[i].coinb2, s->coinbase[0].coinb2);
+			}
+			if (empty_only) datum_shared_write_coinb2(s, &s->subsidy_only_coinbase, block_reward(s->height), false, 16000);
+		} else {
+			DLOG_ERROR("xorpool shared: coinbase input is too long for the in-coinbase extranonce, so this job pays pool_address only; shorten the coinbase tags");
+		}
 	}
 	
 	// prep binary versions of the coinbase for speeding up later

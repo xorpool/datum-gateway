@@ -132,6 +132,8 @@ typedef struct {
 	int coinbase_unique_id;
 	bool mining_per_miner_payout;
 	int mining_pool_fee_bps;
+	char mining_shared_payout_file[1024];
+	int mining_shared_min_payout_sats;
 	
 	char api_admin_password[72];
 	size_t api_admin_password_len;

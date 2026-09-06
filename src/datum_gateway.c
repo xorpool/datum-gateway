@@ -59,6 +59,7 @@
 #include "datum_sockets.h"
 #include "datum_api.h"
 #include "datum_coinbaser.h"
+#include "datum_shared.h"
 #include "datum_protocol.h"
 
 const char *datum_gateway_config_filename = NULL;
@@ -211,6 +212,11 @@ int main(const int argc, const char * const * const argv) {
 		exit(1);
 	}
 #endif
+	
+	if (datum_shared_init()) {
+		DLOG_FATAL("Could not initialize shared payout mode. Exiting.");
+		return 1;
+	}
 	
 	if (datum_coinbaser_init()) {
 		DLOG_FATAL("Error initializing coinbaser thread");
