@@ -914,7 +914,9 @@ static int permine_read_varint(const unsigned char *p, size_t avail, uint64_t *o
 	if (p[0] < 0xfd) { *out = p[0]; return 1; }
 	if (p[0] == 0xfd) { if (avail < 3) return 0; *out = p[1] | ((uint64_t)p[2] << 8); return 3; }
 	if (p[0] == 0xfe) { if (avail < 5) return 0; *out = upk_u32le(p, 1); return 5; }
-	if (avail < 9) return 0; *out = upk_u64le(p, 1); return 9;
+	if (avail < 9) return 0;
+	*out = upk_u64le(p, 1);
+	return 9;
 }
 
 bool datum_permine_rewrite_coinbase(const T_DATUM_STRATUM_JOB *job, const T_DATUM_STRATUM_COINBASE *src, const unsigned char *miner_script, int miner_script_len, T_DATUM_STRATUM_COINBASE *dst) {
