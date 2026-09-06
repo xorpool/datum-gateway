@@ -224,7 +224,14 @@ void datum_shared_flush(T_DATUM_MINER_DATA *m, const char *why) {
 void datum_shared_note_accepted(T_DATUM_MINER_DATA *m, uint64_t diff, uint64_t now_tsms) {
 	if (!datum_shared_enabled()) return;
 	m->shared_diff_unflushed += diff;
-	if (!m->shared_flush_tsms) m->shared_flush_tsms = now_tsms;
+	if (!m->shared_flush_tsms) {
+		// first accepted share from this connection: flush it right away so a new
+		// miner appears in the payout window within seconds, then fall back to the
+		// per-minute cadence (established miners still log just once a minute).
+		datum_shared_flush(m, "first share");
+		m->shared_flush_tsms = now_tsms;
+		return;
+	}
 	if (now_tsms >= m->shared_flush_tsms + SHARED_FLUSH_MS) {
 		datum_shared_flush(m, "minute");
 		m->shared_flush_tsms = now_tsms;
